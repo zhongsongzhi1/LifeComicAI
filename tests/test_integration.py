@@ -163,6 +163,7 @@ class TestComicGenerationE2E:
         from app.config.config import get_settings
         from app.llm.openai_provider import OpenAIProvider
         from app.llm.qianfan_provider import QianfanProvider
+        from app.llm.qianfan_image_provider import QianfanImageProvider
         from app.agents.album_agent import AlbumAgent
         from app.agents.vision_agent import VisionAgent
         from app.agents.story_agent import StoryAgent
@@ -177,7 +178,7 @@ class TestComicGenerationE2E:
         ])
 
         print("\n" + "=" * 60)
-        print("E2E 漫画生成测试（真实照片）")
+        print("E2E 漫画生成测试（真实照片 + 文生图）")
         print("=" * 60)
         print(f"测试图片: {len(image_files)} 张")
         for i, f in enumerate(image_files):
@@ -226,11 +227,20 @@ class TestComicGenerationE2E:
                 access_key=settings.QIANFAN_ACCESS_KEY,
                 secret_key=settings.QIANFAN_SECRET_KEY,
             )
+            qianfan.configure(
+                api_key=settings.OPENAI_API_KEY,
+                base_url=settings.OPENAI_BASE_URL,
+            )
+            image_provider = QianfanImageProvider(
+                access_key=settings.QIANFAN_ACCESS_KEY,
+                secret_key=settings.QIANFAN_SECRET_KEY,
+            )
 
             svc = StoryService(
                 album_agent=AlbumAgent(llm_provider=openai_llm),
                 vision_agent=VisionAgent(qianfan_provider=qianfan),
                 story_agent=StoryAgent(llm_provider=openai_llm),
+                image_provider=image_provider,
             )
 
             # ── Step 4: 运行完整流水线 ──
@@ -259,9 +269,18 @@ class TestComicGenerationE2E:
             for scene in story_graph.get("scenes", []):
                 print(f"\n  Scene #{scene['seq_num']} [{scene['time_at']}] @ {scene['location']}")
                 print(f"    {scene['summary']}")
+                narration = scene.get("narration", "")
+                dialogue = scene.get("dialogue", "")
+                if narration:
+                    print(f"    旁白: {narration}")
+                if dialogue:
+                    print(f"    对话: {dialogue}")
                 print(f"    角色: {[c['name'] for c in scene.get('characters', [])]}")
                 print(f"    动作: {[(a['verb'], a['object']) for a in scene.get('actions', [])]}")
                 print(f"    情绪: {[(e['type'], e['intensity']) for e in scene.get('emotions', [])]}")
+                comic_url = scene.get("comic_image_url", "")
+                if comic_url:
+                    print(f"    漫画: {comic_url}")
 
             print(f"\n{'=' * 60}")
             print("E2E 漫画生成测试（真实照片）PASSED")

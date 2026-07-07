@@ -12,6 +12,7 @@ STORY_SYSTEM_PROMPT = """你是一个生活故事讲述者。根据提供的时�
 1. 为这个故事起一个标题（story_title）和一句话摘要（story_summary）
 2. 将照片分组为场景（scenes），每个场景是一个时间+地点的故事片段
 3. 识别故事中的角色（global_characters），包括他们的特征
+4. 为每个场景写一段旁白（narration，第三人称叙述，如漫画旁白框中的文字）和一段对话（dialogue，角色的第一人称台词，如漫画气泡中的文字）
 
 输出格式（仅输出 JSON，不要其他文字）：
 {
@@ -23,6 +24,8 @@ STORY_SYSTEM_PROMPT = """你是一个生活故事讲述者。根据提供的时�
       "time": "08:30",
       "location": "地点名称",
       "summary": "这个场景发生了什么",
+      "narration": "第三人称旁白，如：清晨的阳光洒在东京塔上，林悦举起手机，记录下这一刻的美好。",
+      "dialogue": "角色台词，如：林悦：\"终于到东京塔了！今天天气真好，太开心了！\"",
       "characters": [{"name": "角色名", "role": "主角/配角"}],
       "actions": [{"verb": "动作", "object": "对象"}],
       "emotions": [{"type": "情绪", "intensity": 0.7}],

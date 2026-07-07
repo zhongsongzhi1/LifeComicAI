@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.agents.album_agent import AlbumAgent
 from app.agents.vision_agent import VisionAgent
 from app.agents.story_agent import StoryAgent
+from app.llm.qianfan_image_provider import QianfanImageProvider
 from app.db.models import (
     Album, Photo, PhotoAnalysis, Story, Scene,
     Character, SceneCharacter, SceneAction, SceneEmotion, ScenePhoto,
@@ -20,17 +21,19 @@ logger = logging.getLogger(__name__)
 
 
 class StoryService:
-    """Story 生成编排：串行调用 3 个 Agent。"""
+    """Story 生成编排：串行调用 3 个 Agent + 文生图。"""
 
     def __init__(
         self,
         album_agent: AlbumAgent,
         vision_agent: VisionAgent,
         story_agent: StoryAgent,
+        image_provider: Optional[QianfanImageProvider] = None,
     ):
         self.album_agent = album_agent
         self.vision_agent = vision_agent
         self.story_agent = story_agent
+        self.image_provider = image_provider
 
     async def generate_story(self, album_id: int, session: AsyncSession) -> Optional[dict]:
         """完整的故事生成流水线。
@@ -109,6 +112,10 @@ class StoryService:
             # 6. 持久化 Scenes, Characters 等
             await self._persist_story_graph(session, story.id, story_graph)
 
+            # 7. 为每个场景生成漫画图片
+            if self.image_provider:
+                await self._generate_scene_images(session, story.id, story_graph)
+
             story.title = story_graph.get("story_title", "")
             story.summary = story_graph.get("story_summary", "")
             story.scene_count = len(story_graph.get("scenes", []))
@@ -152,6 +159,8 @@ class StoryService:
                 time_at=scene_data.get("time", ""),
                 location=scene_data.get("location", ""),
                 summary=scene_data.get("summary", ""),
+                narration=scene_data.get("narration", ""),
+                dialogue=scene_data.get("dialogue", ""),
             )
             session.add(scene)
             await session.flush()
@@ -194,6 +203,53 @@ class StoryService:
             for photo_id in scene_data.get("source_photos", []):
                 sp = ScenePhoto(scene_id=scene.id, photo_id=photo_id)
                 session.add(sp)
+
+    async def _generate_scene_images(self, session: AsyncSession, story_id: int, story_graph: dict):
+        """为每个场景调用文生图 API 生成漫画图片。"""
+        scenes = story_graph.get("scenes", [])
+        if not scenes or not self.image_provider:
+            return
+
+        # 查询已持久化的 Scene 记录
+        result = await session.execute(
+            select(Scene).where(Scene.story_id == story_id).order_by(Scene.seq_num)
+        )
+        db_scenes = result.scalars().all()
+
+        for i, scene_data in enumerate(scenes):
+            if i >= len(db_scenes):
+                break
+            scene = db_scenes[i]
+
+            # 构建文生图 prompt（融入旁白和对话）
+            location = scene_data.get("location", "")
+            summary_text = scene_data.get("summary", "")
+            narration = scene_data.get("narration", "")
+            dialogue = scene_data.get("dialogue", "")
+            characters = [c.get("name", "") for c in scene_data.get("characters", [])]
+            chars_str = "、".join(characters) if characters else "一个人"
+
+            prompt = (
+                f"漫画风格，{location}场景。{summary_text}。"
+                f"角色：{chars_str}。"
+            )
+            if narration:
+                prompt += f"旁白：{narration}。"
+            if dialogue:
+                prompt += f"对话：{dialogue}。"
+            prompt += "日系清新画风，温暖色调，精细细节，漫画分镜风格。"
+
+            try:
+                result = self.image_provider.generate(prompt, size="1024x1024")
+                if result and result.get("urls"):
+                    scene.comic_image_url = result["urls"][0]
+                    logger.info(f"Scene #{scene.seq_num} comic image generated: {scene.comic_image_url[:80]}...")
+                else:
+                    logger.warning(f"Scene #{scene.seq_num} image generation returned no URL")
+            except Exception as e:
+                logger.error(f"Scene #{scene.seq_num} image generation failed: {e}")
+
+        await session.flush()
 
     async def get_story(self, story_id: int, session: AsyncSession) -> Optional[dict]:
         """获取故事详情。"""
@@ -271,6 +327,9 @@ class StoryService:
                 "time_at": scene.time_at,
                 "location": scene.location,
                 "summary": scene.summary,
+                "narration": scene.narration or "",
+                "dialogue": scene.dialogue or "",
+                "comic_image_url": scene.comic_image_url or "",
                 "characters": characters,
                 "actions": actions,
                 "emotions": emotions,
@@ -330,6 +389,9 @@ class StoryService:
             "time_at": scene.time_at,
             "location": scene.location,
             "summary": scene.summary,
+            "narration": scene.narration or "",
+            "dialogue": scene.dialogue or "",
+            "comic_image_url": scene.comic_image_url or "",
             "characters": characters,
             "actions": actions,
             "emotions": emotions,

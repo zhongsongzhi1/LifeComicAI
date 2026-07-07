@@ -41,8 +41,10 @@ class QianfanImageProvider:
         if seed is None:
             seed = random.randint(1, 2**32 - 1)
 
+        # AK 可能已含 ALTAK- 前缀，兼容两种格式
+        ak = self.access_key if self.access_key.startswith("ALTAK-") else f"ALTAK-{self.access_key}"
         headers = {
-            "Authorization": f"Bearer bce-v3/{self.access_key}/{self.secret_key}",
+            "Authorization": f"Bearer bce-v3/{ak}/{self.secret_key}",
             "Content-Type": "application/json",
         }
 

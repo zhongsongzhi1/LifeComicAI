@@ -82,6 +82,9 @@ class Scene(Base):
     time_at = Column(String(10), nullable=True, default="")
     location = Column(String(255), nullable=True, default="")
     summary = Column(Text, nullable=True, default="")
+    narration = Column(Text, nullable=True, default="")
+    dialogue = Column(Text, nullable=True, default="")
+    comic_image_url = Column(String(1000), nullable=True, default="")
 
     story = relationship("Story", back_populates="scenes")
     characters = relationship("SceneCharacter", back_populates="scene", lazy="selectin")
