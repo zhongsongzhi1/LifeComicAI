@@ -32,3 +32,8 @@ dev = [
 
 [tool.setuptools.packages.find]
 include = ["app", "app.*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: integration tests that require real API keys",
+]
