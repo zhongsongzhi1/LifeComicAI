@@ -38,15 +38,14 @@ class TestQianfanProvider:
 
 
 class TestOpenAIProvider:
-    @patch("app.llm.openai_provider.OpenAI")
-    def test_chat_returns_content(self, mock_openai_cls):
+    @patch("app.llm.openai_provider.ChatOpenAI")
+    def test_chat_returns_content(self, mock_chat_cls):
         """验证 OpenAI Provider 返回消息内容"""
         mock_client = MagicMock()
         mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "这是测试回复"
-        mock_client.chat.completions.create.return_value = mock_response
-        mock_openai_cls.return_value = mock_client
+        mock_response.content = "这是测试回复"
+        mock_client.invoke.return_value = mock_response
+        mock_chat_cls.return_value = mock_client
 
         from app.llm.openai_provider import OpenAIProvider
 
@@ -57,15 +56,14 @@ class TestOpenAIProvider:
 
         assert result == "这是测试回复"
 
-    @patch("app.llm.openai_provider.OpenAI")
-    def test_chat_json_mode(self, mock_openai_cls):
+    @patch("app.llm.openai_provider.ChatOpenAI")
+    def test_chat_json_mode(self, mock_chat_cls):
         """验证 JSON 模式调用"""
         mock_client = MagicMock()
         mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = '{"key": "value"}'
-        mock_client.chat.completions.create.return_value = mock_response
-        mock_openai_cls.return_value = mock_client
+        mock_response.content = '{"key": "value"}'
+        mock_client.invoke.return_value = mock_response
+        mock_chat_cls.return_value = mock_client
 
         from app.llm.openai_provider import OpenAIProvider
 

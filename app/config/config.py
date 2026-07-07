@@ -18,6 +18,8 @@ class Settings:
         self.OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
         self.OPENAI_BASE_URL: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
         self.OPENAI_MODEL_NAME: str = os.getenv("OPENAI_MODEL_NAME", "gpt-4o")
+        self.LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.7"))
+        self.LLM_TOP_P: float = float(os.getenv("LLM_TOP_P", "0.9"))
 
         # 数据库
         self.DATABASE_URL: str = os.getenv("DATABASE_URL", "")

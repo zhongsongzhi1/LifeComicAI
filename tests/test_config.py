@@ -9,6 +9,7 @@ class TestSettings:
         monkeypatch.setenv("QIANFAN_SECRET_KEY", "test_sk")
         monkeypatch.setenv("OPENAI_API_KEY", "test_openai_key")
         monkeypatch.setenv("OPENAI_BASE_URL", "https://test.api.com/v1")
+        monkeypatch.setenv("OPENAI_MODEL_NAME", "gpt-4o")
         monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://user:pass@localhost:5432/testdb")
         monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
         monkeypatch.setenv("UPLOAD_DIR", "./test_uploads")
@@ -35,6 +36,7 @@ class TestSettings:
         monkeypatch.setenv("QIANFAN_SECRET_KEY", "sk")
         monkeypatch.setenv("OPENAI_API_KEY", "key")
         monkeypatch.setenv("OPENAI_BASE_URL", "https://api.com/v1")
+        monkeypatch.delenv("OPENAI_MODEL_NAME", raising=False)
         monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://localhost/test")
         monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
 
