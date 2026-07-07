@@ -37,6 +37,8 @@ def _build_story_service() -> StoryService:
         api_key=settings.OPENAI_API_KEY,
         base_url=settings.OPENAI_BASE_URL,
         model_name=settings.OPENAI_MODEL_NAME,
+        temperature=settings.LLM_TEMPERATURE,
+        top_p=settings.LLM_TOP_P,
     )
     return StoryService(
         album_agent=AlbumAgent(llm_provider=openai_provider),

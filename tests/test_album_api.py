@@ -31,11 +31,8 @@ def client(mock_album_service):
     app.include_router(router)
 
     # 覆盖数据库依赖
-    async def override_get_session():
-        yield MagicMock()
-
     from app.api import albums as albums_module
-    albums_module.get_session_override = override_get_session
+    albums_module.get_session_override = lambda: MagicMock()
 
     with TestClient(app) as c:
         yield c

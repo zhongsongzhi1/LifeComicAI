@@ -125,17 +125,38 @@ class TestStoryAgentIntegration:
 
 
 @pytest.mark.integration
+class TestQianfanImageGeneration:
+    """千帆文生图集成测试"""
+
+    def test_generate_image(self):
+        """验证千帆文生图 API"""
+        from app.llm.qianfan_image_provider import QianfanImageProvider
+
+        settings = get_settings()
+        provider = QianfanImageProvider(
+            access_key=settings.QIANFAN_ACCESS_KEY,
+            secret_key=settings.QIANFAN_SECRET_KEY,
+        )
+
+        prompt = "一只可爱的橘猫坐在窗台上，阳光洒在它身上，温暖治愈的风格"
+        result = provider.generate(prompt, size="1024x1024")
+
+        assert result is not None, "文生图 API 调用失败"
+        assert len(result.get("urls", [])) > 0, "未返回图片 URL"
+
+        print(f"\n[千帆文生图] prompt: {prompt}")
+        print(f"[千帆文生图] 生成图片 URL: {result['urls'][0][:80]}...")
+
+
+@pytest.mark.integration
 class TestComicGenerationE2E:
-    """端到端漫画生成测试 — 图片 → 时间线 → 视觉分析 → 故事图谱"""
+    """端到端漫画生成测试 — 真实照片 → 视觉分析 → 时间线 → 故事图谱"""
 
     @pytest.mark.asyncio
-    async def test_full_pipeline(self):
-        """完整流水线：生成测试图片 → 创建相册 → 运行全部 Agent → 输出故事"""
-        import asyncio
-        import json
-        import tempfile
+    async def test_full_pipeline_with_real_photos(self):
+        """完整流水线：真实照片 → 创建相册 → 运行全部 Agent → 输出故事"""
+        import os as _os
 
-        from PIL import Image, ImageDraw, ImageFont
         from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
         from app.db.models import Base, Album, Photo
@@ -149,114 +170,101 @@ class TestComicGenerationE2E:
 
         settings = get_settings()
 
-        # ── Step 1: 生成 3 张测试图片 ──
-        image_paths = []
-        scenes = [
-            ("早餐", "黄色", "08:30:00"),
-            ("公园", "绿色", "10:15:00"),
-            ("晚餐", "深蓝", "18:45:00"),
-        ]
-        for label, color_name, time_str in scenes:
-            colors = {"黄色": (255, 220, 100), "绿色": (100, 180, 100), "深蓝": (30, 50, 100)}
-            img = Image.new("RGB", (400, 300), color=colors[color_name])
-            draw = ImageDraw.Draw(img)
-            draw.text((150, 130), f"{label}场景\n{time_str}", fill=(255, 255, 255))
-
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-                img.save(f.name)
-                image_paths.append(f.name)
+        # ── Step 1: 加载真实照片 ──
+        image_dir = _os.path.join(_os.path.dirname(__file__), "..", "image")
+        image_files = sorted([
+            f for f in _os.listdir(image_dir) if f.endswith(".png")
+        ])
 
         print("\n" + "=" * 60)
-        print("E2E 漫画生成测试")
+        print("E2E 漫画生成测试（真实照片）")
         print("=" * 60)
-        print(f"测试图片: {len(image_paths)} 张")
-        for i, (label, _, time_str) in enumerate(scenes):
-            print(f"  [{i+1}] {label} - {time_str} → {image_paths[i]}")
+        print(f"测试图片: {len(image_files)} 张")
+        for i, f in enumerate(image_files):
+            print(f"  [{i+1}] {f}")
 
-        try:
-            # ── Step 2: 创建 SQLite 内存数据库 ──
-            engine = create_async_engine("sqlite+aiosqlite://", echo=False)
-            async with engine.begin() as conn:
-                await conn.run_sync(Base.metadata.create_all)
+        assert len(image_files) >= 2, "至少需要 2 张测试图片"
 
-            session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-            async with session_factory() as session:
-                # 创建 Album
-                album = Album(title="漫画生成测试", date="2026-07-07")
-                session.add(album)
+        # ── Step 2: 创建 SQLite 内存数据库 ──
+        engine = create_async_engine("sqlite+aiosqlite://", echo=False)
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with session_factory() as session:
+            # 创建 Album
+            album = Album(title="真实照片测试", date="2026-07-08")
+            session.add(album)
+            await session.flush()
+
+            # 创建 Photos（按顺序分配时间）
+            photo_ids = []
+            times = ["08:30:00", "10:00:00", "14:00:00", "18:00:00"]
+            for i, fname in enumerate(image_files):
+                photo_path = _os.path.join(image_dir, fname)
+                photo = Photo(
+                    album_id=album.id,
+                    path=photo_path,
+                    taken_at=f"2026-07-08 {times[i] if i < len(times) else '12:00:00'}",
+                )
+                session.add(photo)
                 await session.flush()
+                photo_ids.append(photo.id)
 
-                # 创建 Photos
-                photo_ids = []
-                for i, (label, _, time_str) in enumerate(scenes):
-                    photo = Photo(
-                        album_id=album.id,
-                        path=image_paths[i],
-                        taken_at=f"2026-07-07 {time_str}",
-                    )
-                    session.add(photo)
-                    await session.flush()
-                    photo_ids.append(photo.id)
+            await session.commit()
+            print(f"\nAlbum #{album.id} 创建成功，{len(photo_ids)} 张照片")
 
-                await session.commit()
-                print(f"\nAlbum #{album.id} 创建成功，{len(photo_ids)} 张照片")
+            # ── Step 3: 构建 Agent ──
+            openai_llm = OpenAIProvider(
+                api_key=settings.OPENAI_API_KEY,
+                base_url=settings.OPENAI_BASE_URL,
+                model_name=settings.OPENAI_MODEL_NAME,
+                temperature=settings.LLM_TEMPERATURE,
+                top_p=settings.LLM_TOP_P,
+            )
+            qianfan = QianfanProvider(
+                access_key=settings.QIANFAN_ACCESS_KEY,
+                secret_key=settings.QIANFAN_SECRET_KEY,
+            )
 
-                # ── Step 3: 构建 Agent ──
-                openai_llm = OpenAIProvider(
-                    api_key=settings.OPENAI_API_KEY,
-                    base_url=settings.OPENAI_BASE_URL,
-                    model_name=settings.OPENAI_MODEL_NAME,
-                    temperature=settings.LLM_TEMPERATURE,
-                    top_p=settings.LLM_TOP_P,
-                )
-                qianfan = QianfanProvider(
-                    access_key=settings.QIANFAN_ACCESS_KEY,
-                    secret_key=settings.QIANFAN_SECRET_KEY,
-                )
+            svc = StoryService(
+                album_agent=AlbumAgent(llm_provider=openai_llm),
+                vision_agent=VisionAgent(qianfan_provider=qianfan),
+                story_agent=StoryAgent(llm_provider=openai_llm),
+            )
 
-                svc = StoryService(
-                    album_agent=AlbumAgent(llm_provider=openai_llm),
-                    vision_agent=VisionAgent(qianfan_provider=qianfan),
-                    story_agent=StoryAgent(llm_provider=openai_llm),
-                )
+            # ── Step 4: 运行完整流水线 ──
+            print("\n正在分析照片并生成故事图谱...")
+            result = await svc.generate_story(album_id=album.id, session=session)
 
-                # ── Step 4: 运行完整流水线 ──
-                print("\n正在生成故事图谱...")
-                result = await svc.generate_story(album_id=album.id, session=session)
+            assert result is not None, "生成失败"
+            assert result["status"] == "completed", f"状态异常: {result['status']}"
 
-                assert result is not None, "生成失败"
-                assert result["status"] == "completed", f"状态异常: {result['status']}"
+            print(f"\n{'─' * 40}")
+            print(f"故事标题: {result['title']}")
+            print(f"故事摘要: {result['summary']}")
+            print(f"场景数量: {result['scene_count']}")
 
-                print(f"\n{'─' * 40}")
-                print(f"故事标题: {result['title']}")
-                print(f"故事摘要: {result['summary']}")
-                print(f"场景数量: {result['scene_count']}")
+            # ── Step 5: 获取完整故事图谱 ──
+            story_graph = await svc.get_story_graph(result["id"], session)
+            assert story_graph is not None
 
-                # ── Step 5: 获取完整故事图谱 ──
-                story_graph = await svc.get_story_graph(result["id"], session)
-                assert story_graph is not None
+            print(f"\n完整故事图谱:")
+            print(f"  标题: {story_graph['story_title']}")
+            print(f"  摘要: {story_graph['story_summary']}")
+            print(f"  全局角色: {len(story_graph.get('global_characters', []))} 个")
+            for c in story_graph.get("global_characters", []):
+                print(f"    - {c['name']}: {c.get('traits', [])}")
 
-                print(f"\n完整故事图谱:")
-                print(f"  标题: {story_graph['story_title']}")
-                print(f"  摘要: {story_graph['story_summary']}")
-                print(f"  全局角色: {len(story_graph.get('global_characters', []))} 个")
-                for c in story_graph.get("global_characters", []):
-                    print(f"    - {c['name']}: {c.get('traits', [])}")
+            for scene in story_graph.get("scenes", []):
+                print(f"\n  Scene #{scene['seq_num']} [{scene['time_at']}] @ {scene['location']}")
+                print(f"    {scene['summary']}")
+                print(f"    角色: {[c['name'] for c in scene.get('characters', [])]}")
+                print(f"    动作: {[(a['verb'], a['object']) for a in scene.get('actions', [])]}")
+                print(f"    情绪: {[(e['type'], e['intensity']) for e in scene.get('emotions', [])]}")
 
-                for scene in story_graph.get("scenes", []):
-                    print(f"\n  Scene #{scene['seq_num']} [{scene['time_at']}] @ {scene['location']}")
-                    print(f"    {scene['summary']}")
-                    print(f"    角色: {[c['name'] for c in scene.get('characters', [])]}")
-                    print(f"    动作: {[(a['verb'], a['object']) for a in scene.get('actions', [])]}")
-                    print(f"    情绪: {[(e['type'], e['intensity']) for e in scene.get('emotions', [])]}")
+            print(f"\n{'=' * 60}")
+            print("E2E 漫画生成测试（真实照片）PASSED")
+            print("=" * 60)
 
-                print(f"\n{'=' * 60}")
-                print("E2E 漫画生成测试 PASSED")
-                print("=" * 60)
-
-        finally:
-            # 清理测试图片
-            for p in image_paths:
-                if os.path.exists(p):
-                    os.remove(p)
-            await engine.dispose()
+        await engine.dispose()
