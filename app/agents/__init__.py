@@ -5,5 +5,6 @@ from .storyboard_agent import StoryboardAgent
 from .dialogue_agent import DialogueAgent
 from .director_agent import DirectorAgent
 from .comic_agent import ComicAgent
+from .layout_agent import LayoutAgent
 
-__all__ = ["BaseAgent", "AlbumAgent", "StoryAgent", "StoryboardAgent", "DialogueAgent", "DirectorAgent", "ComicAgent"]
+__all__ = ["BaseAgent", "AlbumAgent", "StoryAgent", "StoryboardAgent", "DialogueAgent", "DirectorAgent", "ComicAgent", "LayoutAgent"]
