@@ -14,6 +14,7 @@ except ImportError:
 from app.api.albums import albums_router
 from app.api.stories import stories_router
 from app.api.characters import characters_router
+from app.api.comics import comics_router
 from app.api.health import health_router
 from app.config.config import get_settings
 from app.db.database import init_db
@@ -41,6 +42,7 @@ app.add_middleware(
 app.include_router(albums_router)
 app.include_router(stories_router)
 app.include_router(characters_router)
+app.include_router(comics_router)
 app.include_router(health_router)
 
 
