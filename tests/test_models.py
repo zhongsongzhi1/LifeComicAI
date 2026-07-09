@@ -101,6 +101,7 @@ async def test_all_tables_exist():
         "albums", "photos", "photo_analysis",
         "stories", "scenes", "characters",
         "scene_characters", "scene_actions", "scene_emotions", "scene_photos",
+        "comics", "comic_pages", "generation_tasks", "prompt_versions",
     }
 
     async with engine.connect() as conn:

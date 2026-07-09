@@ -71,6 +71,7 @@ class Story(Base):
     album = relationship("Album", back_populates="stories")
     scenes = relationship("Scene", back_populates="story", lazy="selectin",
                           order_by="Scene.seq_num")
+    comics = relationship("Comic", back_populates="story", lazy="selectin")
 
 
 class Scene(Base):
@@ -148,3 +149,73 @@ class ScenePhoto(Base):
 
     scene = relationship("Scene", back_populates="photos")
     photo = relationship("Photo", back_populates="scene_photos")
+
+
+class Comic(Base):
+    __tablename__ = "comics"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    story_id = Column(Integer, ForeignKey("stories.id"), nullable=False)
+    style = Column(String(50), nullable=False, default="slice")
+    status = Column(String(20), nullable=False, default="processing")
+    total_pages = Column(Integer, nullable=False, default=0)
+    pdf_path = Column(String(500), nullable=False, default="")
+    image_partial = Column(Integer, nullable=False, default=0)
+    dialogue_partial = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, server_default=func.now())
+
+    story = relationship("Story", back_populates="comics")
+    pages = relationship("ComicPage", back_populates="comic", lazy="selectin",
+                         order_by="ComicPage.page_num")
+    tasks = relationship("GenerationTask", back_populates="comic", lazy="selectin",
+                         order_by="GenerationTask.id")
+
+
+class ComicPage(Base):
+    __tablename__ = "comic_pages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    comic_id = Column(Integer, ForeignKey("comics.id"), nullable=False)
+    page_num = Column(Integer, nullable=False)
+    shot_type = Column(String(20), nullable=False, default="Medium")
+    image_prompt = Column(Text, nullable=False, default="")
+    image_url = Column(String(500), nullable=False, default="")
+    dialogue = Column(Text, nullable=False, default="")
+    narration = Column(Text, nullable=False, default="")
+    layout_json = Column(JSON, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+    comic = relationship("Comic", back_populates="pages")
+
+
+class GenerationTask(Base):
+    __tablename__ = "generation_tasks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    comic_id = Column(Integer, ForeignKey("comics.id"), nullable=False)
+    agent_name = Column(String(30), nullable=False)
+    status = Column(String(20), nullable=False, default="pending")
+    input_snapshot = Column(JSON, nullable=True)
+    output_snapshot = Column(JSON, nullable=True)
+    error_message = Column(Text, nullable=False, default="")
+    retry_count = Column(Integer, nullable=False, default=0)
+    started_at = Column(DateTime, nullable=True)
+    ended_at = Column(DateTime, nullable=True)
+
+    comic = relationship("Comic", back_populates="tasks")
+
+
+class PromptVersion(Base):
+    __tablename__ = "prompt_versions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    agent_name = Column(String(30), nullable=False, default="director")
+    style_key = Column(String(30), nullable=False)
+    style_name = Column(String(50), nullable=False, default="")
+    mood = Column(String(20), nullable=False, default="温馨")
+    dialogue_level = Column(String(10), nullable=False, default="中")
+    cinematic = Column(Integer, nullable=False, default=0)
+    prompt_template = Column(Text, nullable=False, default="")
+    version = Column(Integer, nullable=False, default=1)
+    is_active = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime, server_default=func.now())
