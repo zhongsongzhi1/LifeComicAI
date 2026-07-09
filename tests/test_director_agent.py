@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock
 from app.agents.director_agent import DirectorAgent
 
 
@@ -41,7 +41,7 @@ def sample_director_output():
 @pytest.fixture
 def mock_llm(sample_director_output):
     llm = MagicMock()
-    llm.chat_json = AsyncMock(return_value=sample_director_output)
+    llm.chat_json = MagicMock(return_value=sample_director_output)
     return llm
 
 
@@ -58,7 +58,7 @@ async def test_director_agent_run(mock_llm, sample_storyboard_with_dialogue, sam
 @pytest.mark.asyncio
 async def test_director_agent_fallback(mock_llm, sample_storyboard_with_dialogue, sample_style_config):
     """When LLM returns empty, should return original pages with director_applied=False."""
-    mock_llm.chat_json = AsyncMock(return_value={})
+    mock_llm.chat_json = MagicMock(return_value={})
     agent = DirectorAgent(mock_llm)
     result = await agent.run(storyboard_with_dialogue=sample_storyboard_with_dialogue, style_config=sample_style_config)
     assert result["director_applied"] is False
@@ -69,7 +69,7 @@ async def test_director_agent_fallback(mock_llm, sample_storyboard_with_dialogue
 @pytest.mark.asyncio
 async def test_director_agent_llm_error(mock_llm, sample_storyboard_with_dialogue, sample_style_config):
     """When LLM raises exception, should fallback to original pages."""
-    mock_llm.chat_json = AsyncMock(side_effect=Exception("LLM error"))
+    mock_llm.chat_json = MagicMock(side_effect=Exception("LLM error"))
     agent = DirectorAgent(mock_llm)
     result = await agent.run(storyboard_with_dialogue=sample_storyboard_with_dialogue, style_config=sample_style_config)
     assert result["director_applied"] is False

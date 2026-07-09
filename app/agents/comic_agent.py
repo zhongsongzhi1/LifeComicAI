@@ -47,11 +47,12 @@ class ComicAgent(BaseAgent):
             dialogue = page_info.get("dialogue", "")
 
             prompt = self._build_image_prompt(style_name, desc, dialogue)
-            image_url = await self.image_provider.generate_with_retry(
+            result = self.image_provider.generate_with_retry(
                 prompt, size="1024x1024", max_retries=2
             )
 
-            if image_url:
+            if result and result.get("urls"):
+                image_url = result["urls"][0]
                 local_path = os.path.join(output_dir, f"page_{page_num}.png")
                 ok = self._download_image(image_url, local_path)
                 if ok:

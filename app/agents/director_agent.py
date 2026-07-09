@@ -39,7 +39,7 @@ class DirectorAgent(BaseAgent):
                 {"role": "system", "content": system_prompt},
             ]
 
-            result = await self.llm_provider.chat_json(messages, temperature=0.5)
+            result = self.llm_provider.chat_json(messages, temperature=0.5)
             if result and result.get("pages"):
                 result["director_applied"] = True
                 return result

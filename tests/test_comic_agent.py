@@ -1,6 +1,6 @@
 import os
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, patch
 from app.agents.comic_agent import ComicAgent
 
 
@@ -18,7 +18,7 @@ def sample_storyboard():
 @pytest.fixture
 def mock_image_provider():
     provider = MagicMock()
-    provider.generate_with_retry = AsyncMock(return_value="https://example.com/image.png")
+    provider.generate_with_retry = MagicMock(return_value={"urls": ["https://example.com/image.png"]})
     return provider
 
 
@@ -65,10 +65,10 @@ async def test_partial_failure(mock_image_provider, tmp_path):
     """Mock 第1页成功、第2页失败，断言 image_partial=True。"""
     call_count = [0]
 
-    async def mock_generate(prompt, size="1024x1024", max_retries=2):
+    def mock_generate(prompt, size="1024x1024", max_retries=2):
         call_count[0] += 1
         if call_count[0] == 1:
-            return "https://example.com/page1.png"
+            return {"urls": ["https://example.com/page1.png"]}
         return None
 
     mock_image_provider.generate_with_retry = mock_generate
@@ -101,7 +101,7 @@ async def test_partial_failure(mock_image_provider, tmp_path):
 @pytest.mark.asyncio
 async def test_all_failed(mock_image_provider, tmp_path):
     """所有页生图失败，断言 all_failed=True。"""
-    mock_image_provider.generate_with_retry = AsyncMock(return_value=None)
+    mock_image_provider.generate_with_retry = MagicMock(return_value=None)
     agent = ComicAgent(mock_image_provider, str(tmp_path))
     result = await agent.run(
         revised_storyboard={
