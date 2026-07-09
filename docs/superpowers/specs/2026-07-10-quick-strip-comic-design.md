@@ -66,6 +66,8 @@ StripService.generate_strip(files, session)
 
 ## 数据模型
 
+**设计原则**：快速条漫是"即传即出"的轻量功能，不需要复杂的任务追踪。只保留一张极简的表记录生成结果，6格数据在内存中流转不持久化（单格图片会保存在磁盘上）。
+
 ### 新增表：quick_strips
 
 ```sql
@@ -74,30 +76,22 @@ CREATE TABLE quick_strips (
     title       VARCHAR(255) DEFAULT '',        -- 自动生成的标题
     status      VARCHAR(20) DEFAULT 'processing', -- processing/completed/failed
     image_path  VARCHAR(500) DEFAULT '',       -- 最终长图本地路径
-    grid_cols   INTEGER DEFAULT 2,            -- 列数
-    grid_rows   INTEGER DEFAULT 3,            -- 行数
     error_msg   TEXT DEFAULT '',
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
-### 新增表：strip_panels
+**不创建 strip_panels 表**——6格的对白、prompt等数据只在内存中流转，不需要持久化。图片文件按目录组织：
 
-```sql
-CREATE TABLE strip_panels (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    strip_id    INTEGER NOT NULL REFERENCES quick_strips(id),
-    panel_num   INTEGER NOT NULL,             -- 1-6
-    image_path  VARCHAR(500) DEFAULT '',      -- 单格图片本地路径
-    image_prompt TEXT DEFAULT '',
-    dialogue    TEXT DEFAULT '',              -- 对白文字
-    narration   TEXT DEFAULT '',
-    source_photo_idx INTEGER DEFAULT 0,      -- 对应第几张上传的照片（0-indexed）
-    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+```
+comics/strips/{strip_id}/
+    ├── panel_1.png    (单格图片)
+    ├── panel_2.png
+    ├── ...
+    └── strip.png      (最终长图)
 ```
 
-### strip_script 数据结构（LLM 输出）
+### strip_script 数据结构（LLM 输出，内存中流转）
 
 ```json
 {
