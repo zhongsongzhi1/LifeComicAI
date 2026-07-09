@@ -48,12 +48,24 @@ app.include_router(health_router)
 
 @app.on_event("startup")
 async def startup_event():
-    """应用启动时初始化数据库。"""
+    """应用启动时初始化数据库和种子数据。"""
     try:
         await init_db()
         logger.info("Database tables initialized successfully")
     except Exception as e:
         logger.error(f"Database initialization failed: {e}")
+
+    # 种子风格预设数据
+    try:
+        from app.db.database import async_session_factory
+        from app.db.seed_prompts import seed_prompt_versions
+
+        async with async_session_factory() as session:
+            await seed_prompt_versions(session)
+            await session.commit()
+        logger.info("Style presets seeded successfully")
+    except Exception as e:
+        logger.error(f"Style presets seeding failed: {e}")
 
 
 if __name__ == "__main__":
