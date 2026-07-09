@@ -64,3 +64,18 @@ class TestSettings:
         s1 = get_settings()
         s2 = get_settings()
         assert s1 is s2
+
+    def test_comics_dir_config(self, monkeypatch):
+        """验证 COMICS_DIR 存在且为字符串类型"""
+        monkeypatch.setenv("QIANFAN_ACCESS_KEY", "ak")
+        monkeypatch.setenv("QIANFAN_SECRET_KEY", "sk")
+        monkeypatch.setenv("OPENAI_API_KEY", "key")
+        monkeypatch.setenv("OPENAI_BASE_URL", "https://api.com/v1")
+        monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://localhost/test")
+        monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+
+        from app.config.config import Settings
+
+        s = Settings()
+        assert hasattr(s, "COMICS_DIR")
+        assert isinstance(s.COMICS_DIR, str)

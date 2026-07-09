@@ -34,6 +34,9 @@ class Settings:
         # 图片上传路径
         self.UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "./uploads")
 
+        # 漫画目录
+        self.COMICS_DIR: str = os.getenv("COMICS_DIR", "./comics")
+
         # 服务配置
         self.HOST: str = os.getenv("HOST", "0.0.0.0")
         self.PORT: int = int(os.getenv("PORT", "8000"))
