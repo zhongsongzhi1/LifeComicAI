@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 
 import uvicorn
@@ -16,6 +17,7 @@ from app.api.stories import stories_router
 from app.api.characters import characters_router
 from app.api.comics import comics_router
 from app.api.health import health_router
+from app.api.strips import strips_router
 from app.config.config import get_settings
 from app.db.database import init_db
 
@@ -44,6 +46,7 @@ app.include_router(stories_router)
 app.include_router(characters_router)
 app.include_router(comics_router)
 app.include_router(health_router)
+app.include_router(strips_router)
 
 
 @app.on_event("startup")
@@ -54,6 +57,31 @@ async def startup_event():
         logger.info("Database tables initialized successfully")
     except Exception as e:
         logger.error(f"Database initialization failed: {e}")
+        try:
+            from app.db.database import engine
+            from sqlalchemy import text
+            async with engine.begin() as conn:
+                await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS quick_strips (
+                        id SERIAL PRIMARY KEY,
+                        title VARCHAR(255) NOT NULL DEFAULT '',
+                        status VARCHAR(20) NOT NULL DEFAULT 'processing',
+                        image_path VARCHAR(500) NOT NULL DEFAULT '',
+                        error_msg TEXT NOT NULL DEFAULT '',
+                        created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT now()
+                    )
+                """))
+            logger.info("quick_strips table created (fallback)")
+        except Exception as e2:
+            logger.error(f"quick_strips fallback creation failed: {e2}")
+
+    try:
+        settings = get_settings()
+        os.makedirs(settings.COMICS_DIR, exist_ok=True)
+        os.makedirs(os.path.join(settings.COMICS_DIR, "strips"), exist_ok=True)
+        os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+    except Exception as e:
+        logger.error(f"Directory creation failed: {e}")
 
     # 种子风格预设数据
     try:

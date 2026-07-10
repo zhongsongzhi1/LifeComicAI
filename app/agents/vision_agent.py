@@ -37,3 +37,26 @@ class VisionAgent(BaseAgent):
                 "clothing": [],
                 "people": [],
             }
+
+    async def run_async(self, photo_id: int, image_path: str) -> Dict[str, Any]:
+        import asyncio
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._sync_run, photo_id, image_path)
+
+    def _sync_run(self, photo_id: int, image_path: str) -> Dict[str, Any]:
+        try:
+            analysis = self.qianfan_provider.analyze_image(image_path)
+            return {
+                "photo_id": photo_id,
+                "scene_desc": analysis.get("scene_desc", ""),
+                "weather": analysis.get("weather", ""),
+                "location": analysis.get("location", ""),
+                "action": analysis.get("action", ""),
+                "emotion": analysis.get("emotion", ""),
+                "clothing": analysis.get("clothing", []),
+                "people": analysis.get("people", []),
+                "objects": analysis.get("objects", []),
+            }
+        except Exception as e:
+            logger.error(f"Vision analysis failed for photo {photo_id}: {e}")
+            return {"photo_id": photo_id, "scene_desc": "", "weather": "", "location": "", "action": "", "emotion": "", "clothing": [], "people": [], "objects": []}

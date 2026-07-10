@@ -31,18 +31,25 @@ class OpenAIProvider:
             top_p=top_p,
         )
 
-    def chat(self, messages: List[Dict[str, str]], temperature: float = None) -> str:
+    def chat(self, messages: List[Dict[str, str]], temperature: float = None, max_tokens: int = None) -> str:
         try:
-            if temperature is not None and temperature != self.temperature:
-                self._client.temperature = temperature
-            response = self._client.invoke(messages)
+            kwargs = {"model": self.model_name, "api_key": self.api_key, "base_url": self.base_url}
+            kwargs["temperature"] = temperature if temperature is not None else self.temperature
+            kwargs["top_p"] = self.top_p
+            if max_tokens is not None:
+                kwargs["max_tokens"] = max_tokens
+            if kwargs["temperature"] == self.temperature and max_tokens is None:
+                response = self._client.invoke(messages)
+            else:
+                client = ChatOpenAI(**kwargs)
+                response = client.invoke(messages)
             return response.content or ""
         except Exception as e:
             logger.error(f"OpenAI API error: {e}")
             raise
 
-    def chat_json(self, messages: List[Dict[str, str]], temperature: float = 0.3) -> Dict[str, Any]:
-        content = self.chat(messages, temperature=temperature)
+    def chat_json(self, messages: List[Dict[str, str]], temperature: float = 0.3, max_tokens: int = None) -> Dict[str, Any]:
+        content = self.chat(messages, temperature=temperature, max_tokens=max_tokens)
         try:
             return json.loads(content)
         except json.JSONDecodeError:

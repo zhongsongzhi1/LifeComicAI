@@ -219,3 +219,21 @@ class PromptVersion(Base):
     version = Column(Integer, nullable=False, default=1)
     is_active = Column(Integer, nullable=False, default=1)
     created_at = Column(DateTime, server_default=func.now())
+
+
+class QuickStrip(Base):
+    __tablename__ = "quick_strips"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    title = Column(String(255), nullable=False, default="")
+    status = Column(String(20), nullable=False, default="processing")
+    image_path = Column(String(500), nullable=False, default="")
+    error_msg = Column(Text, nullable=False, default="")
+    created_at = Column(DateTime, server_default=func.now())
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("title", "")
+        kwargs.setdefault("status", "processing")
+        kwargs.setdefault("image_path", "")
+        kwargs.setdefault("error_msg", "")
+        super().__init__(**kwargs)
