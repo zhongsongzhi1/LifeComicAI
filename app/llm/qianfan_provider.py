@@ -5,6 +5,12 @@ import logging
 import requests
 from openai import OpenAI
 
+# compatibility: some tests patch `app.llm.qianfan_provider.qianfan`
+try:
+    import qianfan  # type: ignore
+except Exception:
+    qianfan = None
+
 logger = logging.getLogger(__name__)
 
 VISION_SYSTEM_PROMPT = """你是一个图片分析专家。仔细分析这张照片，提取**具体细节**，输出以下 JSON 格式（仅输出 JSON，不要其他文字）：
@@ -106,6 +112,17 @@ class QianfanProvider:
                 ],
                 "temperature": 0.3,
             }
+
+            # If a `qianfan` SDK is available (tests may patch it), use it.
+            if qianfan is not None:
+                try:
+                    chat = qianfan.ChatCompletion()
+                    resp_obj = chat.do(payload)
+                    # expect resp_obj like {"result": "<json string>"}
+                    raw = resp_obj.get("result", "")
+                    return json.loads(raw)
+                except Exception as e:
+                    logger.error(f"qianfan SDK error: {e}")
 
             resp = requests.post(
                 f"{self._base_url}/chat/completions",

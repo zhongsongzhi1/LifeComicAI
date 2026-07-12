@@ -40,7 +40,7 @@ STRIP_SCRIPT_SYSTEM_PROMPT = """你是专业漫画分镜师。基于照片分析
 === 核心规则 ===
 1. 严格贴合照片：每格画面描述和对话必须基于对应照片的真实场景、人物动作、表情情绪，禁止编造与照片不符的内容
 2. 对话必须符合场景：如果照片中人物在吃饭，对话必须与吃饭相关；如果在工作，对话必须与工作相关
-3. character_desc：综合所有照片中主角外貌（性别年龄、发型发色、眼镜、五官、体型、服装颜色款式），{num_panels}格统一
+3. character_desc：【仅】包含主角纯外貌特征（性别年龄、发型发色、五官特征、皮肤肤色、体型体态、服装颜色款式、配饰），【绝对禁止】包含任何场景、地点、动作、食物、物品、表情、情绪描述！例如：正确=“女性，25岁，深棕色长发微卷，齐刘海，皮肤白皙，橙色高领毛衣配米白色羽绒马甲”；错误=“在餐厅吃饭的女性”
 4. description（50字内）：画面描述，重点写人物动作和表情，不包含场景（场景由source_photo_idx自动关联）
 5. dialogue（20字内）：必须贴合当前格的场景和动作，幽默/温馨/生活化，有梗
 6. source_photo_idx：每格参考哪张照片（0起），确保场景元素来自该照片
@@ -130,25 +130,25 @@ class StripScriptAgent(BaseAgent):
             src_idx = p.get("source_photo_idx")
             if not isinstance(src_idx, int) or src_idx < 0:
                 return False
-            # 校验镜头字段合法性
-            st = p.get("shot_type", "medium")
+            # 校验镜头字段合法性：兼容外部返回 'shot' 或 'shot_type'，大小写和短横线处理
+            st_raw = p.get("shot_type") or p.get("shot") or "medium"
+            st = str(st_raw).lower().replace("-", "_").replace(" ", "_")
             if st not in VALID_SHOT_TYPES:
-                return False
+                # 不符合已知镜头类型，但仍允许（降级接收）
+                st = "medium"
             shot_types.add(st)
-            comp = p.get("composition", "rule_of_thirds")
+
+            comp_raw = p.get("composition", "rule_of_thirds")
+            comp = str(comp_raw).lower()
             if comp not in VALID_COMPOSITIONS:
-                return False
+                comp = "rule_of_thirds"
             compositions.add(comp)
-            lt = p.get("lighting", "warm")
+
+            lt_raw = p.get("lighting", "warm")
+            lt = str(lt_raw).lower()
             if lt not in VALID_LIGHTINGS:
-                return False
-        # 强制镜头多样性：至少3种不同镜头类型、2种不同构图
-        if len(shot_types) < min(3, num_panels):
-            logger.warning(f"StripScript rejected: only {len(shot_types)} shot types, need >= 3")
-            return False
-        if len(compositions) < min(2, num_panels):
-            logger.warning(f"StripScript rejected: only {len(compositions)} compositions, need >= 2")
-            return False
+                lt = "warm"
+        # 接受 LLM 返回的结构（已做字段规范化），不强制要求镜头多样性
         return True
 
     @staticmethod

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from typing import Any, Dict
@@ -5,6 +6,7 @@ from typing import Any, Dict
 import requests
 
 from app.agents.base import BaseAgent
+from app.utils.prompt_enhancer import PromptEnhancer
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +17,7 @@ class ComicAgent(BaseAgent):
     def __init__(self, image_provider, comics_dir: str):
         self.image_provider = image_provider
         self.comics_dir = comics_dir
+        self.prompt_enhancer = PromptEnhancer()
 
     async def run(self, **kwargs) -> Dict[str, Any]:
         """根据分镜稿生成漫画图片并下载。
@@ -46,10 +49,45 @@ class ComicAgent(BaseAgent):
             desc = page_info.get("desc", "")
             dialogue = page_info.get("dialogue", "")
 
-            prompt = self._build_image_prompt(style_name, desc, dialogue)
-            result = self.image_provider.generate_with_retry(
-                prompt, size="1024x1024", max_retries=2
+            enhanced_prompt = self._build_image_prompt(
+                style_name,
+                desc,
+                dialogue,
+                page_info=page_info
             )
+
+            # Support async providers (generate_async) and sync providers (generate_with_retry)
+            if hasattr(self.image_provider, "generate_async"):
+                try:
+                    result = await self.image_provider.generate_async(
+                        enhanced_prompt["positive_prompt"],
+                        size="1024x1024",
+                        negative_prompt=enhanced_prompt.get("negative_prompt", ""),
+                        max_retries=3,
+                    )
+                except Exception:
+                    # fallback to run_in_executor for providers that expose sync API
+                    loop = asyncio.get_event_loop()
+                    result = await loop.run_in_executor(
+                        None,
+                        lambda: self.image_provider.generate_with_retry(
+                            enhanced_prompt["positive_prompt"],
+                            negative_prompt=enhanced_prompt.get("negative_prompt", ""),
+                            size="1024x1024",
+                            max_retries=3,
+                        ),
+                    )
+            else:
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: self.image_provider.generate_with_retry(
+                        enhanced_prompt["positive_prompt"],
+                        negative_prompt=enhanced_prompt.get("negative_prompt", ""),
+                        size="1024x1024",
+                        max_retries=3,
+                    ),
+                )
 
             if result and result.get("urls"):
                 image_url = result["urls"][0]
@@ -75,13 +113,32 @@ class ComicAgent(BaseAgent):
             "pages": pages,
         }
 
-    @staticmethod
-    def _build_image_prompt(style_name: str, desc: str, dialogue: str) -> str:
-        """构建生图提示词。"""
-        return (
-            f"{style_name}风格漫画，{desc}。"
-            f"角色对白：「{dialogue}」。"
-            f"日系漫画分镜，精细线稿，高质量上色。"
+    def _build_image_prompt(self, style_name: str, desc: str, dialogue: str, page_info: Dict[str, str] = None) -> Dict[str, str]:
+        """使用PromptEnhancer构建生图提示词。"""
+        if page_info is None:
+            page_info = {}
+
+        shot_type = page_info.get("shot", "Medium")
+        characters_detail = page_info.get("characters_detail", "")
+
+        # 根据对白内容选择合适的光影风格
+        lighting = "natural"
+        if dialogue:
+            negative_emotions = ["惊", "怒", "哭", "急", "恐", "绝望"]
+            positive_emotions = ["开心", "笑", "幸福", "甜蜜"]
+
+            if any(emotion in dialogue for emotion in negative_emotions):
+                lighting = "dramatic"
+            elif any(emotion in dialogue for emotion in positive_emotions):
+                lighting = "warm"
+
+        return self.prompt_enhancer.enhance_prompt(
+            style_name=style_name,
+            desc=desc,
+            dialogue=dialogue,
+            shot_type=shot_type,
+            characters_detail=characters_detail,
+            lighting=lighting
         )
 
     @staticmethod

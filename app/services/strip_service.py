@@ -118,7 +118,43 @@ class StripService:
         photo_analyses = photo_analyses or []
         shared_seed = random.randint(1, 2**32 - 1)
         logger.info(f"Generating {len(panels)} panels with shared seed={shared_seed}")
-        sem = asyncio.Semaphore(2)
+        sem = asyncio.Semaphore(3)
+        
+        def _collect_other_scene_keywords(current_idx: int) -> set:
+            current_pa = photo_analyses[current_idx] if current_idx < len(photo_analyses) else None
+            current_keywords = set()
+            if current_pa:
+                if current_pa.get("location"):
+                    for w in current_pa["location"].split("，"):
+                        if w.strip():
+                            current_keywords.add(w.strip())
+                for obj in current_pa.get("objects", []):
+                    current_keywords.add(obj)
+            
+            other_keywords = set()
+            for i, pa in enumerate(photo_analyses):
+                if i == current_idx:
+                    continue
+                if pa.get("location"):
+                    for w in pa["location"].split("，"):
+                        if w.strip():
+                            other_keywords.add(w.strip())
+                for obj in pa.get("objects", []):
+                    other_keywords.add(obj)
+            
+            return other_keywords - current_keywords
+        
+        def _extract_expression_only(desc: str) -> str:
+            if not desc:
+                return ""
+            expr_keywords = ["微笑", "笑", "开心", "专注", "期待", "惊讶", "疑惑", "温柔", "满足", "疲惫", "兴奋", "害羞", "坚定", "轻松", "惬意", "眼神", "嘴角", "脸颊", "表情", "神情", "眼睛"]
+            sentences = desc.split("，")
+            expr_parts = []
+            for s in sentences:
+                if any(kw in s for kw in expr_keywords) and not any(obj_kw in s for obj_kw in ["碗", "筷", "勺", "盘", "食物", "饭", "面", "菜", "汤", "杯", "瓶", "饮料", "书", "手机", "包", "桌子", "椅子", "沙发", "床"]):
+                    expr_parts.append(s)
+            return "，".join(expr_parts)
+
         async with httpx.AsyncClient(timeout=60, trust_env=False) as client:
             async def gen_one(p):
                 async with sem:
@@ -129,20 +165,20 @@ class StripService:
                     if src_idx >= len(photo_analyses):
                         src_idx = min(src_idx % len(photo_analyses), len(photo_analyses) - 1)
                     pa = photo_analyses[src_idx] if src_idx < len(photo_analyses) else None
-                    scene_context = ""
+                    
+                    scene_desc = ""
+                    location = ""
                     if pa:
-                        parts = []
-                        if pa.get("location"):
-                            parts.append(f"地点：{pa['location']}")
-                        if pa.get("scene_desc"):
-                            parts.append(f"场景：{pa['scene_desc']}")
-                        objs = pa.get("objects", [])
-                        if objs:
-                            parts.append(f"物品：{'、'.join(objs[:5])}")
-                        if parts:
-                            scene_context = "。".join(parts)
+                        location = pa.get("location", "")
+                        scene_desc = pa.get("scene_desc", "")
+                    
+                    other_scene_keywords = _collect_other_scene_keywords(src_idx)
+                    expr_desc = _extract_expression_only(desc)
+                    
+                    logger.info(f"Panel {pn} (photo#{src_idx}): scene='{scene_desc[:80]}...', expr='{expr_desc[:60]}...'")
+                    if other_scene_keywords:
+                        logger.info(f"Panel {pn}: negative_scene_keywords={other_scene_keywords}")
 
-                    # 构建结构化 Prompt：[镜头] + [人物] + [动作] + [场景] + [光影] + [构图] + [风格]
                     shot_type = p.get("shot_type", "medium")
                     composition = p.get("composition", "rule_of_thirds")
                     lighting = p.get("lighting", "warm")
@@ -150,25 +186,30 @@ class StripService:
                     comp_desc = COMPOSITION_DESC.get(composition, COMPOSITION_DESC["rule_of_thirds"])
                     light_desc = LIGHTING_DESC.get(lighting, LIGHTING_DESC["warm"])
 
+                    full_negative = NEGATIVE_PROMPT
+                    if other_scene_keywords:
+                        full_negative = f"{NEGATIVE_PROMPT}, {'、'.join(other_scene_keywords)}"
+
                     prompt = (
+                        f"场景：{scene_desc}，地点：{location}。"
                         f"{shot_desc}。"
                         f"{char_desc}。"
-                        f"{desc}。"
-                        f"{scene_context}。"
+                    )
+                    if expr_desc:
+                        prompt += f"人物表情：{expr_desc}。"
+                    prompt += (
                         f"{light_desc}。"
                         f"{comp_desc}。"
                         f"漫画风格，日系条漫，粗黑线稿，半色调网点，高质量竖版插画。"
-                        f"负面提示：{NEGATIVE_PROMPT}"
                     )
                     # 按场景复杂度决定是否开启 prompt_extend
-                    # 结构化 prompt（有 shot_type/composition/lighting）已经足够丰富，关闭扩展防止元素混稀
                     has_structured = all(k in p for k in ("shot_type", "composition", "lighting"))
-                    has_rich_scene = bool(scene_context) and len(scene_context) > 30
+                    has_rich_scene = bool(scene_desc) and len(scene_desc) > 30
                     use_extend = not (has_structured and has_rich_scene)
                     
                     try:
-                        logger.info(f"Panel {pn} (photo#{src_idx}): extend={use_extend}, prompt[:120]={prompt[:120]}...")
-                        r = await self.image_provider.generate_async(prompt, size="864x1152", seed=shared_seed, prompt_extend=use_extend)
+                        logger.info(f"Panel {pn} (photo#{src_idx}): extend={use_extend}, prompt[:150]={prompt[:150]}...")
+                        r = await self.image_provider.generate_async(prompt, size="864x1152", seed=shared_seed, prompt_extend=use_extend, negative_prompt=full_negative)
                         if r and r.get("urls"):
                             lp = os.path.join(out_dir, f"panel_{pn}.png")
                             ok = await self._download_async(client, r["urls"][0], lp)
