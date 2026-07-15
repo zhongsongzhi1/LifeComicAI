@@ -14,11 +14,22 @@ from app.agents.album_agent import AlbumAgent
 from app.agents.vision_agent import VisionAgent
 from app.agents.story_agent import StoryAgent
 from app.config.config import get_settings
+from app.services.cache_service import CacheService
 from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
 get_session_override = None
+
+# 全局缓存服务实例（内存缓存，进程内共享）
+_cache_service = None
+
+
+def _get_cache_service() -> CacheService:
+    global _cache_service
+    if _cache_service is None:
+        _cache_service = CacheService()
+    return _cache_service
 
 
 def _get_session():
@@ -40,9 +51,10 @@ def _build_story_service() -> StoryService:
         temperature=settings.LLM_TEMPERATURE,
         top_p=settings.LLM_TOP_P,
     )
+    cache_svc = _get_cache_service()
     return StoryService(
         album_agent=AlbumAgent(llm_provider=openai_provider),
-        vision_agent=VisionAgent(qianfan_provider=qianfan),
+        vision_agent=VisionAgent(qianfan_provider=qianfan, cache_service=cache_svc),
         story_agent=StoryAgent(llm_provider=openai_provider),
     )
 

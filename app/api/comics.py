@@ -10,7 +10,7 @@ from app.schemas.common import APIResponse
 from app.schemas.comic import ComicGenerateRequest
 from app.services.comic_service import ComicService
 from app.llm.openai_provider import OpenAIProvider
-from app.llm.qianfan_image_provider import QianfanImageProvider
+from app.llm.modelscope_image_provider import ModelScopeImageProvider
 from app.agents.storyboard_agent import StoryboardAgent
 from app.agents.dialogue_agent import DialogueAgent
 from app.agents.director_agent import DirectorAgent
@@ -39,9 +39,9 @@ def _build_comic_service() -> ComicService:
         temperature=settings.LLM_TEMPERATURE,
         top_p=settings.LLM_TOP_P,
     )
-    image_provider = QianfanImageProvider(
-        access_key=settings.QIANFAN_ACCESS_KEY,
-        secret_key=settings.QIANFAN_SECRET_KEY,
+    image_provider = ModelScopeImageProvider(
+        access_key=settings.MODELSCOPE_API_KEY,
+        cache_service=None,
     )
     return ComicService(
         storyboard_agent=StoryboardAgent(llm_provider=openai_provider),

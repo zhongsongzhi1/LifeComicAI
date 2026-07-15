@@ -14,6 +14,10 @@ class Settings:
         self.QIANFAN_ACCESS_KEY: str = os.getenv("QIANFAN_ACCESS_KEY", "")
         self.QIANFAN_SECRET_KEY: str = os.getenv("QIANFAN_SECRET_KEY", "")
 
+        # ModelScope 文生图
+        self.MODELSCOPE_API_KEY: str = os.getenv("MODELSCOPE_API_KEY", "")
+        self.MODELSCOPE_IMAGE_MODEL: str = os.getenv("MODELSCOPE_IMAGE_MODEL", "Tongyi-MAI/Z-Image-Turbo")
+
         # OpenAI 兼容接口
         self.OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
         self.OPENAI_BASE_URL: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
@@ -40,6 +44,26 @@ class Settings:
         # 服务配置
         self.HOST: str = os.getenv("HOST", "0.0.0.0")
         self.PORT: int = int(os.getenv("PORT", "8000"))
+
+        # CORS 配置
+        cors_origins = os.getenv("CORS_ORIGINS", "")
+        self.CORS_ORIGINS: list = [o.strip() for o in cors_origins.split(",") if o.strip()] if cors_origins else []
+
+        self._validate()
+
+
+    def _validate(self):
+        required_keys = ["QIANFAN_ACCESS_KEY", "QIANFAN_SECRET_KEY", "MODELSCOPE_API_KEY", "DATABASE_URL"]
+        missing = []
+        for key in required_keys:
+            value = getattr(self, key, "")
+            if not value:
+                missing.append(key)
+        if missing:
+            raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+
+    def __repr__(self):
+        return f"Settings(QIANFAN_ACCESS_KEY={'***' if self.QIANFAN_ACCESS_KEY else ''}, MODELSCOPE_API_KEY={'***' if self.MODELSCOPE_API_KEY else ''}, OPENAI_API_KEY={'***' if self.OPENAI_API_KEY else ''})"
 
 
 @lru_cache()

@@ -3,8 +3,9 @@ import os
 import sys
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 try:
     from dotenv import load_dotenv
@@ -34,11 +35,26 @@ app = FastAPI(title="LifeOS Story Graph Engine", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=get_settings().CORS_ORIGINS or ["*"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
+
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=["*"],
+)
+
+MAX_REQUEST_SIZE = 100 * 1024 * 1024
+
+
+@app.middleware("http")
+async def request_size_limit_middleware(request: Request, call_next):
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > MAX_REQUEST_SIZE:
+        raise HTTPException(status_code=413, detail="Request size exceeds 100MB limit")
+    return await call_next(request)
 
 # 注册路由
 app.include_router(albums_router)

@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.agents.album_agent import AlbumAgent
 from app.agents.vision_agent import VisionAgent
 from app.agents.story_agent import StoryAgent
-from app.llm.qianfan_image_provider import QianfanImageProvider
+from app.llm.modelscope_image_provider import ModelScopeImageProvider
 from app.db.models import (
     Album, Photo, PhotoAnalysis, Story, Scene,
     Character, SceneCharacter, SceneAction, SceneEmotion, ScenePhoto,
@@ -28,7 +28,7 @@ class StoryService:
         album_agent: AlbumAgent,
         vision_agent: VisionAgent,
         story_agent: StoryAgent,
-        image_provider: Optional[QianfanImageProvider] = None,
+        image_provider: Optional[ModelScopeImageProvider] = None,
     ):
         self.album_agent = album_agent
         self.vision_agent = vision_agent

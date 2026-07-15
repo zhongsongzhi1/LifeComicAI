@@ -2,8 +2,9 @@ import asyncio
 import logging
 import os
 import random
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
+from typing import List
 import httpx
 from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +17,38 @@ logger = logging.getLogger(__name__)
 
 # 场景复杂度阈值：prompt 字符数超过此值视为"丰富"，关闭 prompt_extend
 PROMPT_RICH_THRESHOLD = 80
+MAX_IMAGE_ATTEMPTS = 2
+SIMILARITY_THRESHOLD = 0.18
+
+# ===== 宫崎骏水彩风格提示词 =====
+GHIBLI_STYLE_FRONT = (
+    "杰作级构图，电影级光影，层次丰富的背景细节，"
+    "宫崎骏风格，吉卜力动画，手绘水彩插画，"
+    "柔和的水彩质感，细腻的笔触，温暖的色彩，"
+    "精致的细节，梦幻的氛围，"
+)
+
+GHIBLI_STYLE_BACK = (
+    "吉卜力工作室画风，动画电影质感，"
+    "柔和边缘，水彩晕染效果，色彩通透，"
+    "光影柔和，层次丰富，"
+    "高质量插画，杰作，最佳质量"
+)
+
+# 负面提示词（排除非水彩风格 + 常见缺陷）
+GHIBLI_NEGATIVE_PROMPT = (
+    "3D渲染，写实照片，真人，赛博朋克，粗黑轮廓线，漫画网点，像素风，"
+    "低质量，模糊，变形，丑陋，文字水印，签名，"
+    "nsfw, lowres, bad anatomy, bad hands, text, error, missing fingers, "
+    "extra digit, fewer digits, cropped, worst quality, low quality, "
+    "normal quality, jpeg artifacts, signature, watermark, username, blurry, "
+    "deformed, disfigured, ugly, duplicate, mutilated, out of frame, extra limbs, "
+    "bad proportions, gross proportions, poorly drawn face, poorly drawn hands, "
+    "cloned face, malformed limbs, fused fingers, too many fingers, long neck, "
+    "incoherent background, messy background, cluttered, crowded, "
+    "noise, grain, scratch, smudge, blur, overexposed, underexposed, "
+    "cartoon style, anime style, 2D flat, vector art, simple lines"
+)
 
 # 镜头语言映射（电影化描述，用于AI绘画提示词）
 SHOT_DESC = {
@@ -41,8 +74,8 @@ LIGHTING_DESC = {
     "dramatic": "戏剧性侧光或顶光，强烈明暗对比，高反差，营造情绪张力",
     "soft": "柔光扩散，无明确阴影，整体柔和淡雅，梦幻朦胧",
 }
-# 负面提示词
-NEGATIVE_PROMPT = "nsfw, lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry, deformed, disfigured, ugly, duplicate, mutilated, out of frame, extra limbs, bad proportions, gross proportions, poorly drawn face, poorly drawn hands, cloned face, malformed limbs, fused fingers, too many fingers, long neck, incoherent background"
+# 保留旧的 NEGATIVE_PROMPT 别名以兼容
+NEGATIVE_PROMPT = GHIBLI_NEGATIVE_PROMPT
 
 
 def _panel_count_for(num_photos: int) -> int:
@@ -79,12 +112,18 @@ class StripService:
             script = await self.script_agent.run(photo_analyses=analyses, num_panels=target_panels)
             logger.info(f"Strip {strip_id}: script done, title={script.get('title')}, panels={len(script.get('panels', []))}")
             strip.title = script.get("title", "生活条漫")
-            char_desc = script.get("character_desc", "")
-            panels_script = script.get("panels", [])[:target_panels]
+            char_desc = script.get("character_desc", script.get("character_desc", ""))
+            panels_script = script.get("panels", [])
+            characters = script.get("characters", []) if isinstance(script.get("characters", []), list) else []
             logger.info(f"Strip {strip_id}: generating {len(panels_script)} panels (full parallel)...")
-            panel_results = await self._generate_panels(panels_script, char_desc, out_dir, photo_analyses=analyses)
+            panel_results = await self._generate_panels(panels_script, char_desc, out_dir, photo_analyses=analyses, characters=characters, photo_paths=photo_paths)
             logger.info(f"Strip {strip_id}: panels generated, composing...")
-            compose = await self.layout_agent.run(panels=panel_results, strip_dir=out_dir)
+            compose = await self.layout_agent.run(
+                panels=panel_results,
+                strip_dir=out_dir,
+                photo_paths=photo_paths,
+                title=script.get("title", ""),
+            )
             logger.info(f"Strip {strip_id}: compose done -> {compose['image_path']}")
             strip.status = "completed"
             strip.image_path = compose["image_path"]
@@ -114,36 +153,83 @@ class StripService:
                 out.append(r)
         return out
 
-    async def _generate_panels(self, panels: List[Dict[str, Any]], char_desc: str, out_dir: str, photo_analyses: List[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    async def _generate_panels(self, panels: List[Dict[str, Any]], char_desc: str, out_dir: str, photo_analyses: List[Dict[str, Any]] = None, characters: List[Dict[str, Any]] = None, photo_paths: List[str] = None) -> List[Dict[str, Any]]:
         photo_analyses = photo_analyses or []
+        characters = characters or []
+        photo_paths = photo_paths or []
         shared_seed = random.randint(1, 2**32 - 1)
-        logger.info(f"Generating {len(panels)} panels with shared seed={shared_seed}")
+        logger.info(f"Generating {len(panels)} panels with shared seed={shared_seed}, characters={len(characters)}")
         sem = asyncio.Semaphore(3)
-        
+
+        def _build_panel_prompt(panel: Dict[str, Any], pa: Dict[str, Any], present_chars: List[int], char_desc: str, forbidden: List[str], ref_idx: int) -> str:
+            prompt_parts = [GHIBLI_STYLE_FRONT]
+            if pa:
+                scene_desc = pa.get("scene_desc", "").strip()
+                if scene_desc:
+                    prompt_parts.append(f"参考照片场景：{scene_desc}")
+                if pa.get("location"):
+                    prompt_parts.append(f"地点：{pa.get('location')}")
+                if pa.get("action"):
+                    prompt_parts.append(f"场景动作：{pa.get('action')}")
+                if pa.get("emotion"):
+                    prompt_parts.append(f"氛围情绪：{pa.get('emotion')}")
+                if pa.get("lighting"):
+                    prompt_parts.append(f"光线：{pa.get('lighting')}")
+                if pa.get("color_tone"):
+                    prompt_parts.append(f"整体色调：{pa.get('color_tone')}")
+                if pa.get("objects"):
+                    prompt_parts.append(f"可见物品：{'、'.join(pa.get('objects', [])[:5])}")
+                if pa.get("clothing"):
+                    prompt_parts.append(f"服装关键词：{'、'.join(pa.get('clothing', [])[:5])}")
+            # 明确约束：只参考一张主照片，禁止使用其他照片的显著元素
+            if forbidden:
+                prompt_parts.append(f"仅参考照片索引 {ref_idx} 的内容。禁止借鉴或使用其他照片中的以下元素：{'、'.join(forbidden)}")
+            if characters and present_chars:
+                char_descs = []
+                for ci in present_chars:
+                    if 0 <= ci < len(characters):
+                        c = characters[ci]
+                        cdesc = c.get("char_desc", "")
+                        if cdesc:
+                            char_descs.append(cdesc)
+                if char_descs:
+                    prompt_parts.append(f"出场人物外观：{'，'.join(char_descs)}")
+            elif char_desc:
+                prompt_parts.append(f"出场人物外观：{char_desc}")
+            if panel.get("description"):
+                prompt_parts.append(f"画面描述：{panel.get('description')}")
+            if panel.get("dialogue"):
+                prompt_parts.append(f"对白内容：{panel.get('dialogue')}")
+            prompt_parts.append(SHOT_DESC.get(panel.get("shot_type", "medium"), SHOT_DESC["medium"]))
+            prompt_parts.append(LIGHTING_DESC.get(panel.get("lighting", "warm"), LIGHTING_DESC["warm"]))
+            prompt_parts.append(COMPOSITION_DESC.get(panel.get("composition", "rule_of_thirds"), COMPOSITION_DESC["rule_of_thirds"]))
+            prompt_parts.append(GHIBLI_STYLE_BACK)
+            return "，".join([p for p in prompt_parts if p]) + "。"
+
         def _collect_other_scene_keywords(current_idx: int) -> set:
             current_pa = photo_analyses[current_idx] if current_idx < len(photo_analyses) else None
             current_keywords = set()
             if current_pa:
-                if current_pa.get("location"):
-                    for w in current_pa["location"].split("，"):
+                for text in [current_pa.get("location", ""), current_pa.get("scene_desc", "")]:
+                    for w in text.split("，"):
                         if w.strip():
                             current_keywords.add(w.strip())
                 for obj in current_pa.get("objects", []):
                     current_keywords.add(obj)
-            
+
             other_keywords = set()
             for i, pa in enumerate(photo_analyses):
                 if i == current_idx:
                     continue
-                if pa.get("location"):
-                    for w in pa["location"].split("，"):
+                for text in [pa.get("location", ""), pa.get("scene_desc", "")]:
+                    for w in text.split("，"):
                         if w.strip():
                             other_keywords.add(w.strip())
                 for obj in pa.get("objects", []):
                     other_keywords.add(obj)
-            
+
             return other_keywords - current_keywords
-        
+
         def _extract_expression_only(desc: str) -> str:
             if not desc:
                 return ""
@@ -155,6 +241,22 @@ class StripService:
                     expr_parts.append(s)
             return "，".join(expr_parts)
 
+        # _build_panel_prompt is defined above with forbidden/ref_idx support; remove duplicate older version
+
+        def _choose_face_info(pa: Dict[str, Any], speaker_id: int, characters: List[Dict[str, Any]]) -> Dict[str, str] | None:
+            if not pa or not pa.get("people") or speaker_id < 0 or not characters:
+                return None
+            if speaker_id >= len(characters):
+                return None
+            photo_people_idx = characters[speaker_id].get("photo_people_idx", speaker_id)
+            people = pa.get("people", [])
+            if 0 <= photo_people_idx < len(people):
+                return {
+                    "face_position": people[photo_people_idx].get("face_position", "center_middle"),
+                    "facing": people[photo_people_idx].get("facing", "front"),
+                }
+            return None
+
         async with httpx.AsyncClient(timeout=60, trust_env=False) as client:
             async def gen_one(p):
                 async with sem:
@@ -165,65 +267,128 @@ class StripService:
                     if src_idx >= len(photo_analyses):
                         src_idx = min(src_idx % len(photo_analyses), len(photo_analyses) - 1)
                     pa = photo_analyses[src_idx] if src_idx < len(photo_analyses) else None
-                    
+
                     scene_desc = ""
                     location = ""
                     if pa:
                         location = pa.get("location", "")
                         scene_desc = pa.get("scene_desc", "")
-                    
+                        if scene_desc and (scene_desc.startswith("```") or scene_desc.startswith("{") or '"people_count"' in scene_desc):
+                            logger.warning(f"Panel {pn}: scene_desc appears to be invalid JSON, cleaning up")
+                            if location:
+                                scene_desc = f"{location} 场景"
+                            else:
+                                scene_desc = "日常生活场景"
+                            if location and ("{" in location or "```" in location):
+                                location = ""
+
                     other_scene_keywords = _collect_other_scene_keywords(src_idx)
                     expr_desc = _extract_expression_only(desc)
-                    
+
                     logger.info(f"Panel {pn} (photo#{src_idx}): scene='{scene_desc[:80]}...', expr='{expr_desc[:60]}...'")
                     if other_scene_keywords:
                         logger.info(f"Panel {pn}: negative_scene_keywords={other_scene_keywords}")
-
-                    shot_type = p.get("shot_type", "medium")
-                    composition = p.get("composition", "rule_of_thirds")
-                    lighting = p.get("lighting", "warm")
-                    shot_desc = SHOT_DESC.get(shot_type, SHOT_DESC["medium"])
-                    comp_desc = COMPOSITION_DESC.get(composition, COMPOSITION_DESC["rule_of_thirds"])
-                    light_desc = LIGHTING_DESC.get(lighting, LIGHTING_DESC["warm"])
 
                     full_negative = NEGATIVE_PROMPT
                     if other_scene_keywords:
                         full_negative = f"{NEGATIVE_PROMPT}, {'、'.join(other_scene_keywords)}"
 
-                    prompt = (
-                        f"场景：{scene_desc}，地点：{location}。"
-                        f"{shot_desc}。"
-                        f"{char_desc}。"
+                    forbidden_list = list(other_scene_keywords) if other_scene_keywords else []
+                    prompt = _build_panel_prompt(
+                        panel=p,
+                        pa=pa,
+                        present_chars=p.get("present_chars", []),
+                        char_desc=char_desc,
+                        forbidden=forbidden_list,
+                        ref_idx=src_idx,
                     )
-                    if expr_desc:
-                        prompt += f"人物表情：{expr_desc}。"
-                    prompt += (
-                        f"{light_desc}。"
-                        f"{comp_desc}。"
-                        f"漫画风格，日系条漫，粗黑线稿，半色调网点，高质量竖版插画。"
-                    )
-                    # 按场景复杂度决定是否开启 prompt_extend
+                    p["face_info"] = _choose_face_info(pa, p.get("speaker_id", 0), characters)
+
                     has_structured = all(k in p for k in ("shot_type", "composition", "lighting"))
                     has_rich_scene = bool(scene_desc) and len(scene_desc) > 30
                     use_extend = not (has_structured and has_rich_scene)
-                    
-                    try:
-                        logger.info(f"Panel {pn} (photo#{src_idx}): extend={use_extend}, prompt[:150]={prompt[:150]}...")
-                        r = await self.image_provider.generate_async(prompt, size="864x1152", seed=shared_seed, prompt_extend=use_extend, negative_prompt=full_negative)
-                        if r and r.get("urls"):
-                            lp = os.path.join(out_dir, f"panel_{pn}.png")
-                            ok = await self._download_async(client, r["urls"][0], lp)
-                            logger.info(f"Panel {pn}: ok={ok}")
-                            if ok:
-                                p["image_path"] = lp
-                                return p
-                    except Exception as e:
-                        logger.warning(f"Panel {pn} failed: {e}", exc_info=True)
+
+                    for attempt in range(1, MAX_IMAGE_ATTEMPTS + 1):
+                        attempt_seed = shared_seed + attempt
+                        try:
+                            logger.info(
+                                f"Panel {pn} attempt {attempt}: prompt[:120]={prompt[:120]}... extend={use_extend} seed={attempt_seed}"
+                            )
+                            r = await self.image_provider.generate_async(
+                                prompt,
+                                size="864x1152",
+                                seed=attempt_seed,
+                                prompt_extend=use_extend,
+                                negative_prompt=full_negative,
+                                max_retries=3,
+                                reference_image=photo_paths[src_idx] if src_idx < len(photo_paths) else None,
+                            )
+                            if r and r.get("urls"):
+                                lp = os.path.join(out_dir, f"panel_{pn}.png")
+                                ok = await self._download_async(client, r["urls"][0], lp)
+                                if ok and self._is_valid_image(lp):
+                                    # 语义相似度检测（基于颜色直方图）
+                                    similar = True
+                                    try:
+                                        if pa and src_idx < len(photo_paths):
+                                            ref_path = photo_paths[src_idx]
+                                            sim = self._histogram_similarity(ref_path, lp)
+                                            logger.info(f"Panel {pn}: histogram similarity to reference={sim:.3f}")
+                                            similar = sim >= SIMILARITY_THRESHOLD
+                                    except Exception as e:
+                                        logger.warning(f"Panel {pn}: similarity check failed: {e}")
+
+                                    if similar:
+                                        p["image_path"] = lp
+                                        p["generation_attempts"] = attempt
+                                        logger.info(f"Panel {pn}: generated successfully on attempt {attempt}")
+                                        return p
+                                    else:
+                                        logger.warning(f"Panel {pn}: low similarity ({sim:.3f}), will retry if attempts remain")
+                                else:
+                                    logger.warning(f"Panel {pn}: generated file invalid or download failed on attempt {attempt}")
+                        except Exception as e:
+                            logger.warning(f"Panel {pn} attempt {attempt} failed: {e}", exc_info=True)
+
                     lp = os.path.join(out_dir, f"panel_{pn}.png")
                     self._placeholder(lp)
                     p["image_path"] = lp
+                    p["generation_attempts"] = MAX_IMAGE_ATTEMPTS
                     return p
             return await asyncio.gather(*[gen_one(dict(p)) for p in panels])
+
+    @staticmethod
+    def _is_valid_image(path: str) -> bool:
+        try:
+            with Image.open(path) as img:
+                img.verify()
+                width, height = img.size
+                return width >= 200 and height >= 200
+        except Exception as e:
+            logger.warning(f"Invalid image file {path}: {e}")
+            return False
+
+    @staticmethod
+    def _histogram_similarity(path_a: str, path_b: str) -> float:
+        try:
+            a = Image.open(path_a).convert('RGB').resize((256, 256), Image.LANCZOS)
+            b = Image.open(path_b).convert('RGB').resize((256, 256), Image.LANCZOS)
+            ha = a.histogram()
+            hb = b.histogram()
+            # cosine similarity
+            import math
+            dot = 0.0
+            lena = len(ha)
+            for i in range(lena):
+                dot += ha[i] * hb[i]
+            suma = sum(x * x for x in ha)
+            sumb = sum(x * x for x in hb)
+            if suma == 0 or sumb == 0:
+                return 0.0
+            return dot / (math.sqrt(suma) * math.sqrt(sumb))
+        except Exception as e:
+            logger.warning(f"Histogram similarity failed: {e}")
+            return 0.0
 
     @staticmethod
     async def _download_async(client: httpx.AsyncClient, url: str, path: str) -> bool:
